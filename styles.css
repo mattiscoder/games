@@ -1,0 +1,61 @@
+:root {
+  font-family: system-ui, sans-serif;
+  background: #0e1d2f;
+  color: #f4f7ff;
+}
+body {
+  margin: 0;
+  padding: 1rem;
+}
+header {
+  text-align: center;
+}
+main {
+  display: grid;
+  grid-template-columns: 1fr 1.2fr 1fr;
+  gap: 1rem;
+}
+.player,
+.center {
+  background: #152a43;
+  border-radius: 12px;
+  padding: 0.75rem;
+}
+.row {
+  margin: 0.75rem 0;
+}
+.cards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+.card {
+  border: 1px solid #92b1df;
+  border-radius: 10px;
+  background: #24466f;
+  color: #fff;
+  min-width: 56px;
+  padding: 0.45rem;
+  cursor: pointer;
+}
+.card.red {
+  color: #ffd2d2;
+}
+.card.selected {
+  outline: 3px solid #ffdc6b;
+}
+.card.back {
+  background: #444;
+}
+.center .controls {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+button {
+  cursor: pointer;
+}
+.small {
+  font-size: 0.85rem;
+  opacity: 0.9;
+}
