@@ -1,256 +1,193 @@
-const SUITS = ["♠", "♥", "♦", "♣"];
-const RANKS = ["2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A"];
-const VALUE = Object.fromEntries(RANKS.map((r, i) => [r, i + 2]));
+const $ = s => document.querySelector(s);
+const cardTpl = $('#card-tpl').content.firstElementChild;
 
-const state = {
-  players: [createPlayer("Player 1"), createPlayer("Player 2")],
-  drawPile: [],
-  discardPile: [],
-  burned: [],
-  currentPlayer: 0,
-  selected: [],
-  pending7Mode: null,
-  last7Constraint: null, // "high" or "low"
-  pendingAValue: null,
-  winner: null,
+let role = null;
+let snapshot = null;
+let selected = [];
+
+// --- Network ---
+
+async function send(type, payload = {}) {
+  await fetch('/api/action', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ type, role, ...payload }),
+  });
+  await loadState();
+}
+
+async function loadState() {
+  const r = await fetch(`/api/state?role=${role}`);
+  snapshot = await r.json();
+  render();
+}
+
+async function init() {
+  try {
+    const r = await fetch('/api/info');
+    const { ip, port } = await r.json();
+    $('#connect-url').textContent = `Other devices: http://${ip}:${port}`;
+  } catch {
+    $('#connect-url').textContent = '';
+  }
+}
+
+// --- Join ---
+
+$('#join-btn').onclick = async () => {
+  role = $('#seat').value;
+  selected = [];
+  $('#join-screen').classList.add('hidden');
+  $('#game').classList.remove('hidden');
+  await loadState();
+  setInterval(loadState, 1500);
 };
 
-function createPlayer(name) {
-  return { name, hand: [], faceUp: [], faceDown: [] };
-}
+// --- Card helper ---
 
-function makeDeck() {
-  const deck = [];
-  for (const s of SUITS) for (const r of RANKS) deck.push({ suit: s, rank: r, id: crypto.randomUUID() });
-  for (let i = deck.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [deck[i], deck[j]] = [deck[j], deck[i]];
+function makeCard(c, i, selectable, isSelected) {
+  const b = cardTpl.cloneNode(true);
+  if (!c.rank) {
+    b.classList.add('back');
+  } else {
+    b.textContent = c.rank + c.suit;
+    if (c.suit === '♥' || c.suit === '♦') b.classList.add('red');
   }
-  return deck;
-}
-
-function init() {
-  state.drawPile = makeDeck();
-  for (const p of state.players) {
-    p.faceDown = state.drawPile.splice(0, 3);
-    p.faceUp = state.drawPile.splice(0, 3);
-    p.hand = state.drawPile.splice(0, 3);
+  if (isSelected) b.classList.add('selected');
+  b.disabled = !selectable;
+  if (selectable) {
+    b.onclick = () => {
+      const z = snapshot[role].activeZone;
+      if (z === 'faceDown') {
+        selected = [i];
+      } else {
+        selected = selected.includes(i)
+          ? selected.filter(x => x !== i)
+          : [...selected, i];
+      }
+      render();
+    };
   }
-  render();
+  return b;
 }
 
-function activeZone(player) {
-  if (player.hand.length) return "hand";
-  if (player.faceUp.length) return "faceUp";
-  return "faceDown";
-}
+// --- Player view ---
 
-function isMagic(rank) {
-  return ["A", "2", "3", "7", "10"].includes(rank);
-}
+function renderPlayerView() {
+  const me = snapshot[role];
+  const isMyTurn = snapshot.currentPlayer === role && !snapshot.winner;
+  const z = me.activeZone;
+  const cards = me[z];
 
-function effectiveTopRank() {
-  for (let i = state.discardPile.length - 1; i >= 0; i--) {
-    const c = state.discardPile[i];
-    if (c.rank !== "3") return c.asRank ?? c.rank;
-  }
-  return null;
-}
+  // Determine if we need to show a 7 mode picker
+  // (only relevant when playing a 7 and it's your turn)
+  const has7Selected = selected.some(i => cards[i] && cards[i].rank === '7');
 
-function checkPlayable(cards) {
-  const top = effectiveTopRank();
-  if (!top) return { ok: true };
+  $('#game').innerHTML = `
+    <p class="status-line">${snapshot.status}</p>
+    <div id="card-area" class="card-area"></div>
+    ${has7Selected ? `
+      <div class="seven-picker">
+        7 mode:
+        <button id="play-high">High (next must be ≥7)</button>
+        <button id="play-low">Low (next must be ≤7)</button>
+      </div>
+    ` : `
+      <div class="controls">
+        <button id="play-btn"${!isMyTurn || !selected.length ? ' disabled' : ''}>Play Selected</button>
+        <button id="pickup-btn"${!isMyTurn ? ' disabled' : ''}>Pick Up Pile</button>
+      </div>
+    `}
+  `;
 
-  const allMagic = cards.every((c) => isMagic(c.rank));
-  if (allMagic) return { ok: true };
-
-  const nonMagic = cards.filter((c) => !isMagic(c.rank));
-  if (!nonMagic.length) return { ok: true };
-
-  const vals = nonMagic.map((c) => VALUE[c.rank]).sort((a, b) => a - b);
-  const min = vals[0], max = vals[vals.length - 1];
-
-  let targetTop = VALUE[top];
-  if (state.last7Constraint === "low") {
-    if (max > 7) return { ok: false, reason: "7 low active: must play 7 or lower." };
-    return { ok: true };
-  }
-  if (state.last7Constraint === "high") {
-    if (min < 7) return { ok: false, reason: "7 high active: must play 7 or higher." };
-  }
-
-  if (min >= targetTop) return { ok: true };
-  return { ok: false, reason: `Need ${top} or higher.` };
-}
-
-function isValidCombo(cards) {
-  if (!cards.length) return { ok: false, reason: "No cards selected." };
-  const ranks = cards.map((c) => c.rank);
-  const nonMagic = cards.filter((c) => !isMagic(c.rank));
-
-  if (cards.length === 1) return { ok: true };
-
-  if (new Set(ranks).size === 1) return { ok: true };
-
-  if (cards.length >= 3) {
-    if (!nonMagic.length) return { ok: true };
-    const vals = [...new Set(nonMagic.map((c) => VALUE[c.rank]))].sort((a, b) => a - b);
-    const straight = vals.every((v, i) => i === 0 || v === vals[i - 1] + 1);
-    if (straight) return { ok: true };
-  }
-
-  return { ok: false, reason: "Play same rank or straight of 3+ (magic can be included)." };
-}
-
-function takeFromZone(player, idxs) {
-  const zone = activeZone(player);
-  if (zone === "faceDown") {
-    if (idxs.length !== 1) return { cards: [], zone, reason: "Face-down turn: play one random card by clicking it." };
-    const [i] = idxs;
-    const card = player.faceDown.splice(i, 1)[0];
-    return { cards: [card], zone };
-  }
-  const src = player[zone];
-  idxs.sort((a, b) => b - a);
-  const cards = idxs.map((i) => src.splice(i, 1)[0]);
-  return { cards, zone };
-}
-
-function maybeBurnByFourOfKind() {
-  const meaningful = state.discardPile.filter((c) => c.rank !== "3");
-  if (meaningful.length < 4) return false;
-  const last4 = meaningful.slice(-4).map((c) => c.asRank ?? c.rank);
-  return new Set(last4).size === 1;
-}
-
-function refillHand(player) {
-  while (player.hand.length < 3 && state.drawPile.length) player.hand.push(state.drawPile.shift());
-}
-
-function playSelected() {
-  if (state.winner) return;
-  const p = state.players[state.currentPlayer];
-  const idxs = state.selected;
-  const snapshot = JSON.parse(JSON.stringify(p));
-
-  const picked = takeFromZone(p, [...idxs]);
-  if (picked.reason) return alert(picked.reason);
-  const cards = picked.cards;
-
-  if (!cards.length) return;
-
-  const combo = isValidCombo(cards);
-  if (!combo.ok) {
-    Object.assign(p, snapshot);
-    return alert(combo.reason);
-  }
-  const playable = checkPlayable(cards);
-  if (!playable.ok) {
-    if (picked.zone === "faceDown") {
-      p.hand.push(...state.discardPile.splice(0), ...cards);
-    } else {
-      Object.assign(p, snapshot);
-      p.hand.push(...state.discardPile.splice(0));
-    }
-    state.selected = [];
-    return render(playable.reason + " Picked up pile.");
-  }
-
-  for (const c of cards) {
-    if (c.rank === "A") {
-      const choice = prompt("A is wild. Choose rank (2-10,J,Q,K,A):", "A") || "A";
-      c.asRank = RANKS.includes(choice) ? choice : "A";
-    }
-    if (c.rank === "7") {
-      const mode = prompt("7 mode? type 'high' or 'low'", "low");
-      state.last7Constraint = mode === "high" ? "high" : "low";
-    }
-    state.discardPile.push(c);
-  }
-
-  if (cards.some((c) => c.rank === "2")) state.last7Constraint = null;
-
-  let burned = false;
-  if (cards.some((c) => c.rank === "10") || maybeBurnByFourOfKind()) {
-    state.burned.push(...state.discardPile.splice(0));
-    state.last7Constraint = null;
-    burned = true;
-  }
-
-  refillHand(p);
-  state.selected = [];
-
-  if (!p.hand.length && !p.faceUp.length && !p.faceDown.length) {
-    state.winner = p.name;
-    return render(`${p.name} wins!`);
-  }
-
-  if (!burned) state.currentPlayer = (state.currentPlayer + 1) % 2;
-  render(burned ? "Pile burned. Same player goes again." : undefined);
-}
-
-function pickupPile() {
-  const p = state.players[state.currentPlayer];
-  p.hand.push(...state.discardPile.splice(0));
-  state.selected = [];
-  state.currentPlayer = (state.currentPlayer + 1) % 2;
-  render(`${p.name} picked up the pile.`);
-}
-
-function endTurn() {
-  state.selected = [];
-  state.currentPlayer = (state.currentPlayer + 1) % 2;
-  render();
-}
-
-function render(msg) {
-  document.getElementById("status").textContent = msg || (state.winner ? `Winner: ${state.winner}` : `${state.players[state.currentPlayer].name}'s turn`);
-  document.getElementById("draw-count").textContent = `${state.drawPile.length} cards`;
-  document.getElementById("discard").textContent = state.discardPile.map(showCard).join(" ");
-  document.getElementById("burned").textContent = `${state.burned.length} cards burned`;
-
-  state.players.forEach((p, pi) => {
-    const el = document.getElementById(`player-${pi}`);
-    const zone = activeZone(p);
-    el.innerHTML = `<h2>${p.name} ${state.currentPlayer === pi ? "(Current)" : ""}</h2>
-      <p class='small'>Active zone: ${zone}</p>
-      <div class='row'><strong>Hand (${p.hand.length})</strong><div class='cards' data-zone='hand'></div></div>
-      <div class='row'><strong>Face Up (${p.faceUp.length})</strong><div class='cards' data-zone='faceUp'></div></div>
-      <div class='row'><strong>Face Down (${p.faceDown.length})</strong><div class='cards' data-zone='faceDown'></div></div>`;
-
-    ["hand", "faceUp", "faceDown"].forEach((z) => {
-      const wrap = el.querySelector(`[data-zone='${z}']`);
-      p[z].forEach((c, i) => {
-        const btn = document.getElementById("card-template").content.firstElementChild.cloneNode(true);
-        const selectable = state.currentPlayer === pi && activeZone(p) === z && !state.winner;
-        btn.disabled = !selectable;
-        btn.classList.toggle("back", z === "faceDown");
-        btn.textContent = z === "faceDown" ? "🂠" : showCard(c);
-        if (["♥", "♦"].includes(c.suit)) btn.classList.add("red");
-        const key = `${pi}-${z}-${i}`;
-        if (state.selected.includes(i) && state.currentPlayer === pi && activeZone(p) === z) btn.classList.add("selected");
-        btn.onclick = () => {
-          if (!selectable) return;
-          if (activeZone(p) === "faceDown") {
-            state.selected = [i];
-          } else {
-            state.selected = state.selected.includes(i) ? state.selected.filter((x) => x !== i) : [...state.selected, i];
-          }
-          render();
-        };
-        wrap.appendChild(btn);
-      });
-    });
+  cards.forEach((c, i) => {
+    $('#card-area').appendChild(makeCard(c, i, isMyTurn, selected.includes(i)));
   });
+
+  if (has7Selected) {
+    $('#play-high').onclick = () => send('play', { selected, sevenMode: 'high' });
+    $('#play-low').onclick = () => send('play', { selected, sevenMode: 'low' });
+  } else {
+    if ($('#play-btn')) $('#play-btn').onclick = () => send('play', { selected });
+    if ($('#pickup-btn')) $('#pickup-btn').onclick = () => send('pickup');
+  }
 }
 
-function showCard(c) {
-  const r = c.rank;
-  return `${r}${c.suit}`;
+// --- Spectator view ---
+
+function renderSpectatorView() {
+  const { p1, p2, discardPile, drawCount, burnCount, status, currentPlayer, winner } = snapshot;
+
+  $('#game').innerHTML = `
+    <div class="spectator-layout">
+      <div class="spec-player">
+        <h2>${p1.name}${currentPlayer === 'p1' && !winner ? ' ▶' : ''}</h2>
+        <div class="spec-hand-count">Hand: ${p1.handCount} card${p1.handCount !== 1 ? 's' : ''}</div>
+        <div class="spec-zones">
+          <div>
+            <div class="label">Face Up</div>
+            <div class="cards" id="fu1"></div>
+          </div>
+          <div>
+            <div class="label">Face Down</div>
+            <div class="cards" id="fd1"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="spec-center">
+        <p class="status-line">${status}</p>
+        <div class="piles">
+          <div class="pile">
+            <div class="label">Draw</div>
+            <div class="pile-count">${drawCount}</div>
+          </div>
+          <div class="pile">
+            <div class="label">Discard</div>
+            <div class="cards" id="discard-pile"></div>
+          </div>
+          <div class="pile">
+            <div class="label">Burned</div>
+            <div class="pile-count">${burnCount}</div>
+          </div>
+        </div>
+        <div class="controls">
+          <button id="new-game-btn">New Game</button>
+        </div>
+      </div>
+
+      <div class="spec-player">
+        <h2>${p2.name}${currentPlayer === 'p2' && !winner ? ' ▶' : ''}</h2>
+        <div class="spec-hand-count">Hand: ${p2.handCount} card${p2.handCount !== 1 ? 's' : ''}</div>
+        <div class="spec-zones">
+          <div>
+            <div class="label">Face Up</div>
+            <div class="cards" id="fu2"></div>
+          </div>
+          <div>
+            <div class="label">Face Down</div>
+            <div class="cards" id="fd2"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  p1.faceUp.forEach(c => $('#fu1').appendChild(makeCard(c, -1, false, false)));
+  p1.faceDown.forEach(() => $('#fd1').appendChild(makeCard({ rank: '', suit: '' }, -1, false, false)));
+  p2.faceUp.forEach(c => $('#fu2').appendChild(makeCard(c, -1, false, false)));
+  p2.faceDown.forEach(() => $('#fd2').appendChild(makeCard({ rank: '', suit: '' }, -1, false, false)));
+  discardPile.slice(-5).forEach(c => $('#discard-pile').appendChild(makeCard(c, -1, false, false)));
+
+  $('#new-game-btn').onclick = () => { selected = []; send('new_game'); };
 }
 
-document.getElementById("play-selected").onclick = playSelected;
-document.getElementById("pickup").onclick = pickupPile;
-document.getElementById("end-turn").onclick = endTurn;
+// --- Render dispatcher ---
+
+function render() {
+  if (!snapshot) return;
+  if (role === 'spectator') renderSpectatorView();
+  else renderPlayerView();
+}
 
 init();
