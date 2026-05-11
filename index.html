@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Shithead (2 Player) Prototype</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header>
+      <h1>Shithead / Palace (2 Players)</h1>
+      <p id="status"></p>
+    </header>
+
+    <main>
+      <section class="player" id="player-0"></section>
+
+      <section class="center">
+        <div class="pile-block">
+          <h3>Draw Pile</h3>
+          <div id="draw-count"></div>
+        </div>
+        <div class="pile-block">
+          <h3>Discard Pile (Top last)</h3>
+          <div id="discard"></div>
+        </div>
+        <div class="pile-block">
+          <h3>Burned Cards</h3>
+          <div id="burned"></div>
+        </div>
+
+        <div class="controls">
+          <button id="play-selected">Play Selected</button>
+          <button id="pickup">Pick Up Pile</button>
+          <button id="end-turn">End Turn</button>
+        </div>
+        <p class="hint">You can play same-rank sets or straights (3+). Magic: A wild, 2 reset, 3 invisible, 7 selectable high/low, 10 burn.</p>
+      </section>
+
+      <section class="player" id="player-1"></section>
+    </main>
+
+    <template id="card-template">
+      <button class="card"></button>
+    </template>
+
+    <script src="script.js"></script>
+  </body>
+</html>
