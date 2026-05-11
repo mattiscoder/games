@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Shithead Table</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="topbar">
+      <h1>Shithead Table</h1>
+      <div id="conn"></div>
+    </div>
+
+    <section class="join">
+      <label>Your seat:
+        <select id="seat">
+          <option value="p1">Player 1</option>
+          <option value="p2">Player 2</option>
+          <option value="spectator">Spectator</option>
+        </select>
+      </label>
+      <button id="join">Join / Rejoin</button>
+      <button id="new-game">New Game</button>
+      <p id="status"></p>
+    </section>
+
+    <main class="table">
+      <section id="opp" class="player-area"></section>
+      <section class="center-area">
+        <div class="piles">
+          <div class="pile"><h3>Draw</h3><div id="draw" class="stack"></div></div>
+          <div class="pile"><h3>Discard</h3><div id="discard" class="stack cards"></div></div>
+          <div class="pile"><h3>Burned</h3><div id="burn" class="stack"></div></div>
+        </div>
+        <div class="controls">
+          <button id="play">Play Selected</button>
+          <button id="pickup">Pick Up Pile</button>
+        </div>
+      </section>
+      <section id="you" class="player-area"></section>
+    </main>
+
+    <template id="card-template"><button class="card"></button></template>
+    <script src="script.js"></script>
+  </body>
+</html>
